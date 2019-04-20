@@ -1,0 +1,21 @@
+// Symbol table
+// Scope level 0:
+//	Symbol Name       Page Address
+//	----------------  ------------
+//	INIT_CODE         3000
+//	GLOBAL_DATA_POINTER  300C
+//	GLOBAL_MAIN_POINTER  300D
+//	main              300E
+//	lc3_L1_first      3028
+//	lc3_sum           302F
+//	lc3_L5_first      3051
+//	GLOBAL_DATA_START  3058
+//	L1_first          3058
+//	sum               3059
+//	L5_first          305A
+//	L7_first          305B
+//	L6_first          305C
+//	L4_first          305D
+//	L3_first          305E
+//	L2_first          305F
+

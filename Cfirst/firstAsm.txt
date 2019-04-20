@@ -1,0 +1,124 @@
+.Orig x3000
+INIT_CODE
+LEA R6, #-1          ; R6 = x3000
+ADD R5, R6, #0       ; R5 = x3000
+ADD R6, R6, R6       ; R6 = x6000
+ADD R6, R6, R6       ; R6 = xC000
+ADD R6, R6, R5       ; R6 = xF000
+ADD R6, R6, #-1      ; R6 = xEFFF
+ADD R5, R5, R5       ; R5 = x6000  (why?)
+ADD R5, R6, #0       ; R5 = xEFFF
+LD R4, GLOBAL_DATA_POINTER  ; R4 = GLOBAL_DATA_START
+LD R7, GLOBAL_MAIN_POINTER  ; R7 = main
+jsrr R7                     ; starts program with main method
+HALT
+
+GLOBAL_DATA_POINTER .FILL GLOBAL_DATA_START
+GLOBAL_MAIN_POINTER .FILL main
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;main;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+main                                              ; labels next line          
+ADD R6, R6, #-2  ;->returnValue->retAddress       ; execution starts here
+STR R7, R6, #0   ; stores returnAddress
+ADD R6, R6, #-1  ; ->previousFramePointer
+STR R5, R6, #0   ; stores previousFramePointer (here xEFFF)
+ADD R5, R6, #-1  ; R5 = first local variable
+
+ADD R6, R6, #-3  ; R6 = top of main activation record (3 local variables) 
+
+ADD R7, R4, #7   ; R7 = GLOBAL_DATA_START + 7 = address of #3
+ldr R7, R7, #0   ; R7 = 3
+str R7, R5, #0   ; a = 3
+
+ADD R7, R4, #6   ; R7 = GLOBAL_DATA_START + 6 = address of #2
+ldr R7, R7, #0   ; R7 = 2
+str R7, R5, #-1  ; b = 2
+ldr R7, R5, #-1  ; R7 = b = 2
+
+ADD R6, R6, #-1  ; -> 1st param (n1=b)  
+STR R7, R6, #0   ; n1 = 2
+ldr R7, R5, #0   ; R7 = a = 3
+ADD R6, R6, #-1  ; -> 2nd param (n2=a)
+STR R7, R6, #0   ; n2 = 3 
+ADD R0, R4, #1   ; R0 = address of sum: holds address of function
+LDR R0, R0, #0   ; R0 = address of function sum
+jsrr R0          ; make function call  (nextline stored in R7)
+LDR R7, R6, #0   ; returns here (**)  ; R7 = return value (-11)
+ADD R6, R6, #1   ; R6 points to location of n2 (parameter)
+str R7, R5, #-2  ; c = -11
+ADD R7, R4, #5   ; R7 = address of global 84
+ldr R7, R7, #0   ; R7 = 84
+
+lc3_L1_first
+STR R7, R5, #3   ; return value slot of main set to 84
+ADD R6, R5, #1   ; R6 = R5 + 1 = previous frame pointer (xEFFF)
+LDR R5, R6, #0   ; R5 = xEFFF  (restores previous frame pointer)
+ADD R6, R6, #1   ; R6 = location of return value for main
+LDR R7, R6, #0   ; R7 = location of HALT
+ADD R6, R6, #1   ; R6 = location of 84
+RET              ; PC = address after JSRR main 
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;sum;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+lc3_sum
+ADD R6, R6, #-2    ; ->returnValue->returnAddress
+STR R7, R6, #0     ; saves return address (** above)
+ADD R6, R6, #-1    ; ->previousFramePointer
+STR R5, R6, #0     ; saves previousFramePointer
+ADD R5, R6, #-1    ; sets new frame pointer
+ADD R6, R6, #-4    ; space for local variables (s1,s2,sum,answer)
+
+ADD R7, R4, #4     ; R7 = GLOBAL_DATA_START + 4 = address of #9
+ldr R7, R7, #0     ; R7 = 9 
+str R7, R5, #0     ; s1 = 9
+
+ADD R7, R4, #3     ; R7 = GLOBAL_DATA_START + 3 = address of #7
+ldr R7, R7, #0     ; R7 = 7
+str R7, R5, #-1    ; s2 = 7
+
+ldr R7, R5, #0     ; R7 = 9  (s1)
+ldr R3, R5, #-1    ; R3 = 7  (s2)
+add R7, R7, R3     ; R7 = s1 + s2
+str R7, R5, #-2    ; sum = 16 (s1+s2)
+
+ldr R7, R5, #5     ; R7 = n1 = 2
+ldr R3, R5, #4     ; R3 = n2 = 3
+add R7, R7, R3     ; R7 = n1 + n2 = 5
+ldr R3, R5, #-2    ; R3 = sum = 16
+
+ADD R6, R6, #-1    ; R6 = address above answer
+STR R0, R6, #0     ; saves R0 (stores address of function sum)
+ADD R6, R6, #-1    ; R6 = address above function address
+STR R3, R6, #0     ; saves R3 (stores 16)
+
+NOT R3, R3         ; R3 = ~16  (uses R3)
+ADD R3, R3, #1     ; R3 = ~16 + 1 = -16
+ADD R0, R7, R3     ; R0 = R7 + R3 = (n1 + n2) + -16  = 5 - 16 = -11 (uses R0)
+
+LDR R3, R6, #0     ; R3 = 16 (restores R3 from save)
+ADD R6, R6, #1     ; ->saved spot for R0
+ADD R7, R0, #0     ; R7 = -11  (so R7 holds calculated value)
+LDR R0, R6, #0     ; R0 = address of function sum) (restores R0 from save)
+ADD R6, R6, #1     ; -> back to top of stack
+
+str R7, R5, #-3    ; answer = -11   
+ldr R7, R5, #-3    ; R7 = -11
+
+lc3_L5_first       ; address of next line
+STR R7, R5, #3     ; puts -11 into return value slot
+ADD R6, R5, #1     ; R6 = R5+1 so R6 = location of previous frame pointer
+LDR R5, R6, #0     ; R5 = restored to frame pointer for main
+ADD R6, R6, #1     ; R6 = location of return address
+LDR R7, R6, #0     ; R7 = return address (for RET below) (**)
+ADD R6, R6, #1     ; R6 = points to return value
+RET                ; PC = address of (**) in main ->jumps to HALT
+
+
+GLOBAL_DATA_START             ; R4 points here
+L1_first .FILL lc3_L1_first
+sum .FILL lc3_sum            ; GLOBAL_DATA_START + 1
+L5_first .FILL lc3_L5_first
+L7_first .FILL #7
+L6_first .FILL #9            ; GLOBAL_DATA_START + 4
+L4_first .FILL #84
+L3_first .FILL #2
+L2_first .FILL #3       ; GLOBAL_DATA_START + 7    a
+.END
