@@ -30,6 +30,9 @@
  * History:
  *	SSL	1	18 October 2003
  *		Copyright notices and Gnu Public License marker added.
+ *
+ * April 2011: fixed signedness bugs that generated warnings that worried
+ *             students. sws, Dartmouth
  */
 
 #include <ctype.h>
@@ -58,13 +61,11 @@
 #define OPCODE_WIDTH 6 
 
 /* NOTE: hardcoded in scanfs! */
-#define MAX_CMD_WORD_LEN    41    /* command word limit + 1 */
-#define MAX_FILE_NAME_LEN  251    /* file name limit + 1    */
-#define MAX_LABEL_LEN       81    /* label limit + 1        */
+#define MAX_CMD_WORD_LEN   41    /* command word limit + 1 */
+#define MAX_FILE_NAME_LEN 251    /* file name limit + 1    */
+#define MAX_LABEL_LEN      81    /* label limit + 1        */
 
-#define MAX_SCRIPT_DEPTH    10    /* prevent infinite recursion in scripts */
-#define MAX_FINISH_DEPTH 10000000 /* avoid waiting to finish subroutine    */
-				  /* that recurses infinitely              */
+#define MAX_SCRIPT_DEPTH   10    /* prevent infinite recursion in scripts */
 
 #define TOO_MANY_ARGS     "WARNING: Ignoring excess arguments."
 #define BAD_ADDRESS       \
@@ -112,7 +113,6 @@ static void cmd_continue  (const unsigned char* args);
 static void cmd_dump      (const unsigned char* args);
 static void cmd_execute   (const unsigned char* args);
 static void cmd_file      (const unsigned char* args);
-static void cmd_finish    (const unsigned char* args);
 static void cmd_help      (const unsigned char* args);
 static void cmd_list      (const unsigned char* args);
 static void cmd_memory    (const unsigned char* args);
@@ -121,7 +121,6 @@ static void cmd_option    (const unsigned char* args);
 static void cmd_printregs (const unsigned char* args);
 static void cmd_quit      (const unsigned char* args);
 static void cmd_register  (const unsigned char* args);
-static void cmd_reset     (const unsigned char* args);
 static void cmd_step      (const unsigned char* args);
 static void cmd_translate (const unsigned char* args);
 static void cmd_lc3_stop  (const unsigned char* args);
@@ -144,45 +143,37 @@ struct command_t {
 };
 
 static const struct command_t command[] = {
-    {"break",     1, cmd_break,     CMD_FLAG_NONE      },
-    {"continue",  1, cmd_continue,  CMD_FLAG_REPEATABLE},
-    {"dump",      1, cmd_dump,      CMD_FLAG_LIST_TYPE },
-    {"execute",   1, cmd_execute,   CMD_FLAG_NONE      },
-    {"file",      1, cmd_file,      CMD_FLAG_NONE      },
-    {"finish",    3, cmd_finish,    CMD_FLAG_REPEATABLE},
-    {"help",      1, cmd_help,      CMD_FLAG_NONE      },
-    {"list",      1, cmd_list,      CMD_FLAG_LIST_TYPE },
-    {"memory",    1, cmd_memory,    CMD_FLAG_NONE      },
-    {"next",      1, cmd_next,      CMD_FLAG_REPEATABLE},
-    {"option",    1, cmd_option,    CMD_FLAG_NONE      },
-    {"printregs", 1, cmd_printregs, CMD_FLAG_NONE      },
-    {"quit",      4, cmd_quit,      CMD_FLAG_NONE      },
-    {"register",  1, cmd_register,  CMD_FLAG_NONE      },
-    {"reset",     5, cmd_reset,     CMD_FLAG_NONE      },
-    {"step",      1, cmd_step,      CMD_FLAG_REPEATABLE},
-    {"translate", 1, cmd_translate, CMD_FLAG_NONE      },
-    {"x",         1, cmd_lc3_stop,  CMD_FLAG_GUI_ONLY  },
+    {(unsigned char*)"break",     1, cmd_break,     CMD_FLAG_NONE      },
+    {(unsigned char*)"continue",  1, cmd_continue,  CMD_FLAG_REPEATABLE},
+    {(unsigned char*)"dump",      1, cmd_dump,      CMD_FLAG_LIST_TYPE },
+    {(unsigned char*)"execute",   1, cmd_execute,   CMD_FLAG_NONE      },
+    {(unsigned char*)"file",      1, cmd_file,      CMD_FLAG_NONE      },
+    {(unsigned char*)"help",      1, cmd_help,      CMD_FLAG_NONE      },
+    {(unsigned char*)"list",      1, cmd_list,      CMD_FLAG_LIST_TYPE },
+    {(unsigned char*)"memory",    1, cmd_memory,    CMD_FLAG_NONE      },
+    {(unsigned char*)"next",      1, cmd_next,      CMD_FLAG_REPEATABLE},
+    {(unsigned char*)"option",    1, cmd_option,    CMD_FLAG_NONE      },
+    {(unsigned char*)"printregs", 1, cmd_printregs, CMD_FLAG_NONE      },
+    {(unsigned char*)"quit",      4, cmd_quit,      CMD_FLAG_NONE      },
+    {(unsigned char*)"register",  1, cmd_register,  CMD_FLAG_NONE      },
+    {(unsigned char*)"step",      1, cmd_step,      CMD_FLAG_REPEATABLE},
+    {(unsigned char*)"translate", 1, cmd_translate, CMD_FLAG_NONE      },
+    {(unsigned char*)"x",         1, cmd_lc3_stop,  CMD_FLAG_GUI_ONLY  },
     {NULL,        0, NULL,          CMD_FLAG_NONE      }
 };
 
 static int lc3_register[NUM_REGS];
-#define REG(i) lc3_register[(i)]
 static int lc3_memory[65536];
 static int lc3_show_later[65536];
 static bpt_type_t lc3_breakpoints[65536];
 
-/* startup script or file */
-static char* start_script = NULL;
-static char* start_file = NULL;
-
 static int should_halt = 1, last_KBSR_read = 0, last_DSR_read = 0, gui_mode;
 static int interrupted_at_gui_request = 0, stop_scripts = 0, in_init = 0;
 static int have_mem_to_dump = 0, need_a_stop_notice = 0;
-static int sys_bpt_addr = -1, finish_depth = 0;
+static int sys_bpt_addr = -1;
 static inst_flag_t last_flags;
 /* options and script recursion level */
-static int flush_on_start = 1, keep_input_on_stop = 1;
-static int rand_device = 1, delay_mem_update = 1;
+static int flush_console = 1, rand_device = 1, delay_mem_update = 1;
 static int script_uses_stdin = 1, script_depth = 0;
 
 
@@ -196,6 +187,8 @@ static const char* const ccodes[8] = {
     "NEGATIVE", "BAD_CC", "BAD_CC", "BAD_CC"
 };
 
+static int lost_char = 0;  // sws, 4-21-08
+
 
 static int 
 execute_instruction ()
@@ -206,24 +199,19 @@ execute_instruction ()
 
     /* Try to execute it. */
 
-#define ADD_FLAGS(value) (last_flags |= (value))
 #define DEF_INST(name,format,mask,match,flags,code) \
     if ((REG (R_IR) & (mask)) == (match)) {         \
-	last_flags = (flags);                       \
 	code;                                       \
+	last_flags = (flags);                       \
 	goto executed;                              \
     }
 #define DEF_P_OP(name,format,mask,match)
 #include "lc3.def"
 #undef DEF_P_OP
 #undef DEF_INST
-#undef ADD_FLAGS
 
     REG (R_PC) = (REG (R_PC) - 1) & 0xFFFF;
-    if (gui_mode)
-	printf ("ERR {Illegal instruction at x%04X!}\n", REG (R_PC));
-    else
-	printf ("Illegal instruction at x%04X!\n", REG (R_PC));
+    printf ("Illegal instruction at x%04X!\n", REG (R_PC));
     return 0;
 
 executed:
@@ -237,22 +225,6 @@ executed:
     /* Check for system breakpoint (associated with "next" command). */
     if (REG (R_PC) == sys_bpt_addr)
         return 0;
-
-    if (finish_depth > 0) {
-        if ((last_flags & FLG_SUBROUTINE) && 
-	    ++finish_depth == MAX_FINISH_DEPTH) {
-	    if (gui_mode)
-		puts ("ERR {Stopping due to possibly infinite "
-		      "recursion.}");
-	    else
-		puts ("Stopping due to possibly infinite recursion.");
-	    finish_depth = 0;
-	    return 0;
-	} else if ((last_flags & FLG_RETURN) && --finish_depth == 0) {
-	    /* Done with finish command; stop execution. */
-	    return 0;
-	}
-    }
 
     /* Check for GUI needs. */
     if (!in_init && gui_mode) {
@@ -324,12 +296,12 @@ launch_gui_connection ()
     }
 
     /* use it for LC-3 keyboard and display I/O */
-    if ((lc3in = fdopen (fd, "r")) == NULL ||
-	(lc3out = fdopen (fd, "w")) == NULL ||
-	setvbuf (lc3out, NULL, _IONBF, 0) == -1) {
+    if ((lc3in = fdopen (fd, "r+")) == NULL ||
+	setvbuf (lc3in, NULL, _IONBF, 0) == -1) {
 	close (fd);
         return -1;
     }
+    lc3out = lc3in;
 
     return 0;
 }
@@ -361,6 +333,8 @@ simple_readline (const char* prompt)
 	if (!gui_mode && script_depth == 0)
 	    printf ("%s", prompt);
 #endif
+
+
 	/* read a line */
 	if (fgets (buf, 200, sim_in) != NULL)
 	    break;
@@ -394,7 +368,7 @@ command_loop ()
     unsigned char cword[MAX_CMD_WORD_LEN];
     const command_t* a_command;
 
-    while (!stop_scripts && (cmd = lc3readline ("(lc3sim) ")) != NULL) {
+    while (!stop_scripts && (cmd = (unsigned char *)lc3readline ("(lc3sim) ")) != NULL) {
 	/* Skip white space. */
 	for (start = cmd; isspace (*start); start++);
 	if (*start == '\0') {
@@ -410,13 +384,13 @@ command_loop ()
 
 	/* Should never fail; just ignore the command if it does. */
 	/* 40 below == MAX_CMD_WORD_LEN - 1 */
-	if (sscanf (start, "%40s", cword) != 1) {
+	if (sscanf ((char *)start, "%40s", cword) != 1) {
 	    free (cmd);
 	    break;
 	}
 
 	/* Record command word length, then point to arguments. */
-	cword_len = strlen (cword);
+	cword_len = strlen ((char *)cword);
 	for (start += cword_len; isspace (*start); start++);
 		
 	/* Match command word to list of commands. */
@@ -430,7 +404,7 @@ command_loop ()
 	    }
 
 	    /* Try to match a_command. */
-	    if (strncasecmp (cword, a_command->command, cword_len) == 0 &&
+	    if (strncasecmp ((char *)cword, (char *) a_command->command, cword_len) == 0 &&
 	        cword_len >= a_command->min_len &&
 	        (gui_mode || (a_command->flags & CMD_FLAG_GUI_ONLY) == 0)) {
 
@@ -441,9 +415,9 @@ command_loop ()
 		if (a_command->flags & CMD_FLAG_LIST_TYPE) {
 		    unsigned char buf[MAX_CMD_WORD_LEN + 5];
 
-		    strcpy (buf, cword);
-		    strcat (buf, " more");
-		    last_cmd = strdup (buf);
+		    strcpy ((char *)buf, (char *)cword);
+		    strcat ((char *)buf, " more");
+		    last_cmd = (unsigned char *)strdup ((char *)buf);
 		} else if (a_command->flags & CMD_FLAG_REPEATABLE &&
 		           script_depth == 0) {
 		    last_cmd = cmd;
@@ -490,12 +464,12 @@ main (int argc, char** argv)
 
     /* load any object, symbol, or script files requested on command line */
     if (argc == 3 && strcmp (argv[1], "-s") == 0) {
-	start_script = argv[2];
-	init_machine (); /* also executes script */
+	init_machine ();
+	cmd_execute ((unsigned char *)argv[2]);
 	return 0;
     } else if (argc == 2 && strcmp (argv[1], "-h") != 0) {
-	start_file = strdup (argv[1]);
-	init_machine (); /* also loads file */
+	init_machine ();
+	cmd_file ((unsigned char*)argv[1]);
     } else if (argc != 1) {
 	/* argv[0] may not be valid if -gui entered */
 	printf ("syntax: lc3sim [<object file>|<symbol file>]\n");
@@ -520,31 +494,27 @@ read_memory (int addr)
 	case 0xFE00: /* KBSR */
 	    if (!last_KBSR_read) {
 	        p.fd = fileno (lc3in);
-		p.events = POLLIN;
-		if (poll (&p, 1, 0) == 1 && (p.revents & POLLIN) != 0)
-		    last_KBSR_read = (!rand_device || (random () & 15) == 0);
+		p.events = POLLIN;  
+		// sws change below
+		if ( (poll (&p, 1, 0) == 1 && (p.revents & POLLIN) != 0) || lost_char )
+		    last_KBSR_read = (!rand_device || (random () & 7) == 0);
+
 	    }
 	    return (last_KBSR_read ? 0x8000 : 0x0000);
 	case 0xFE02: /* KBDR */
-	    if (last_KBSR_read && (lc3_memory[0xFE02] = fgetc (lc3in)) == -1) {
-	    	/* Should not happen in GUI mode. */
-		/* FIXME: This won't show up correctly in GUI.
-		   Exit is likely to be detected first, and error message
-		   given (LC-3 sim. died), followed by message below 
-		   (read past end), then Tcl/Tk error caused by bad
-		   window access after sim died.  Confusing sequence
-		   if it occurs. */
-		if (gui_mode)
-		    puts ("ERR {LC-3 read past end of input stream.}");
-	    	else
-		    puts ("LC-3 read past end of input stream.");
-		exit (3);
+	  // sws 4-21-08
+	    if (last_KBSR_read) {
+	      if (lost_char) { 
+	        lc3_memory[0xFE02] = lost_char;
+		lost_char = 0;
+	      } else
+		lc3_memory[0xFE02] = fgetc (lc3in);
 	    }
 	    last_KBSR_read = 0;
 	    return lc3_memory[0xFE02];
 	case 0xFE04: /* DSR */
 	    if (!last_DSR_read)
-	        last_DSR_read = (!rand_device || (random () & 15) == 0);
+	      last_DSR_read = (!rand_device || (random () & 7) == 0); // sws
 	    return (last_DSR_read ? 0x8000 : 0x0000);
 	case 0xFE06: /* DDR */
 	    return 0x0000;
@@ -573,16 +543,13 @@ write_memory (int addr, int value)
 	    	should_halt = 1;
 	    return;
     }
-    /* No need to write/update GUI if the same value is already in memory. */
-    if (value != lc3_memory[addr]) {
-	lc3_memory[addr] = value;
-	if (gui_mode) {
-	    if (!delay_mem_update)
-		disassemble_one (addr);
-	    else {
-		lc3_show_later[addr] = 1;
-		have_mem_to_dump = 1; /* a hint */
-	    }
+    lc3_memory[addr] = value;
+    if (gui_mode) {
+        if (!delay_mem_update)
+	    disassemble_one (addr);
+        else {
+	    lc3_show_later[addr] = 1;
+	    have_mem_to_dump = 1; /* a hint */
 	}
     }
 }
@@ -594,7 +561,7 @@ read_obj_file (const unsigned char* filename, int* startp, int* endp)
     int start, addr;
     unsigned char buf[2];
 
-    if ((f = fopen (filename, "r")) == NULL)
+    if ((f = fopen ((char *)filename, "r")) == NULL)
 	return -1;
     if (fread (buf, 2, 1, f) != 1) {
         fclose (f);
@@ -622,18 +589,18 @@ read_sym_file (const unsigned char* filename)
     unsigned char sym[81];
     int addr;
 
-    if ((f = fopen (filename, "r")) == NULL)
+    if ((f = fopen ((char *)filename, "r")) == NULL)
 	return -1;
-    while (fgets (buf, 100, f) != NULL) {
+    while (fgets ((char *)buf, 100, f) != NULL) {
     	if (!adding) {
-	    if (sscanf (buf, "%*s%*s%80s", sym) == 1 &&
-	    	strcmp (sym, "------------") == 0)
+	  if (sscanf ((char *)buf, "%*s%*s%80s", sym) == 1 &&
+	      strcmp ((char *)sym, "------------") == 0)
 		adding = 1;
 	    continue;
 	}
-	if (sscanf (buf, "%*s%80s%x", sym, &addr) != 2)
+	if (sscanf ((char*)buf, "%*s%80s%x", sym, &addr) != 2)
 	    break;
-        add_symbol (sym, addr, 1);
+        add_symbol ((char *)sym, addr, 1);
     }
     fclose (f);
     return 0;
@@ -658,38 +625,25 @@ init_machine ()
     in_init = 1;
 
     bzero (lc3_register, sizeof (lc3_register));
-    REG (R_PSR) = (2L << 9); /* set to condition ZERO */
     bzero (lc3_memory, sizeof (lc3_memory));
     bzero (lc3_show_later, sizeof (lc3_show_later));
     bzero (lc3_sym_names, sizeof (lc3_sym_names));
     bzero (lc3_sym_hash, sizeof (lc3_sym_hash));
     clear_all_breakpoints ();
 
-    if (read_obj_file (INSTALL_DIR "/lc3os.obj", &os_start, &os_end) == -1) {
-	if (gui_mode)
-	    puts ("ERR {Failed to read LC-3 OS code.}");
-	else
-	    puts ("Failed to read LC-3 OS code.");
-	show_state_if_stop_visible ();
-    } else {
-	if (read_sym_file (INSTALL_DIR "/lc3os.sym") == -1) {
-	    if (gui_mode)
-		puts ("ERR {Failed to read LC-3 OS symbols.}");
-	    else
-		puts ("Failed to read LC-3 OS symbols.");
-	}
+    REG (R_PC) = 0x0200;
+    if (read_obj_file ((unsigned char*)(INSTALL_DIR "/lc3os/lc3os.obj"), &os_start, &os_end) == -1)
+        puts ("failed to read LC-3 OS code");
+    else {
+      if (read_sym_file ((unsigned char*)(INSTALL_DIR "/lc3os/lc3os.sym")) == -1)
+	    puts ("failed to read LC-3 OS symbols");
 	if (gui_mode) /* load new code into GUI display */
 	    disassemble (os_start, os_end);
-	REG (R_PC) = 0x0200;
-	run_until_stopped ();
     }
 
-    in_init = 0;
+    run_until_stopped ();
 
-    if (start_script != NULL)
-	cmd_execute (start_script);
-    else if (start_file != NULL)
-	cmd_file (start_file);
+    in_init = 0;
 }
 
 
@@ -894,10 +848,10 @@ printed:
 static void 
 disassemble (int addr_s, int addr_e)
 {
-    do {
+    while (addr_s != addr_e) {
 	disassemble_one (addr_s);
 	addr_s = (addr_s + 1) & 0xFFFF;
-    } while (addr_s != addr_e);
+    }
 }
 
 
@@ -907,7 +861,7 @@ dump_memory (int addr_s, int addr_e)
     int start, addr, i;
     int a[12];
 
-    if (addr_s >= addr_e)
+    if (addr_s > addr_e)
         addr_e += 0x10000;
     for (start = (addr_s / 12) * 12; start < addr_e; start = start + 12) {
         printf ("%04X: ", start & 0xFFFF);
@@ -940,8 +894,7 @@ run_until_stopped ()
 	/* removes PC marker in GUI */
 	printf ("CONT\n");
         tty_fail = 1;
-    } else if (!isatty (fileno (lc3in)) || 
-    	       tcgetattr (fileno (lc3in), &tio) != 0)
+    } else if (!isatty (0) || tcgetattr (0, &tio) != 0)
         tty_fail = 1;
     else {
         tty_fail = 0;
@@ -951,7 +904,7 @@ run_until_stopped ()
 	tio.c_lflag &= ~(ICANON | ECHO);
 	tio.c_cc[VMIN] = 1;
 	tio.c_cc[VTIME] = 0;
-	(void)tcsetattr (fileno (lc3in), TCSANOW, &tio);
+	(void)tcsetattr (0, TCSANOW, &tio);
     }
 
     while (!should_halt && execute_instruction ());
@@ -960,40 +913,19 @@ run_until_stopped ()
 	tio.c_lflag = old_lflag;
 	tio.c_cc[VMIN] = old_min;
 	tio.c_cc[VTIME] = old_time;
-	(void)tcsetattr (fileno (lc3in), TCSANOW, &tio);
-	/* 
-	   Discard any remaining input if requested.  This flush occurs
-	   when the LC-3 stops, in which case any remaining input
-	   to the console will be treated as simulator commands if it
-	   is not discarded.
-
-	   However, discarding can interfere with command sequences that 
-	   include moderately long execution periods.
-
-	   As with gdb, not discarding is the default, since typing in
-	   a bunch of random junk that happens to look like valid
-	   commands happens less frequently than the case above, although
-	   I myself have been bitten a few times in gdb by pressing
-	   return once too often after issuing a repeatable command.
-	*/
-	if (!keep_input_on_stop)
-	    (void)tcflush (fileno (lc3in), TCIFLUSH);
+	(void)tcsetattr (0, TCSANOW, &tio);
     }
 
     /* stopped by CTRL-C?  Check if we need a stop notice... */
-    if (need_a_stop_notice) {
+    if (need_a_stop_notice)
         printf ("\nLC-3 stopped.\n\n");
-	need_a_stop_notice = 0;
-    }
 
     /* 
        If stopped for any reason other than interruption by GUI,
-       clear system breakpoint and terminate any "finish" command.
+       clear system breakpoint.
     */
-    if (!interrupted_at_gui_request) {
+    if (!interrupted_at_gui_request)
 	sys_bpt_addr = -1;
-	finish_depth = 0;
-    }
 
     /* Dump memory and registers if necessary. */
     show_state_if_stop_visible ();
@@ -1073,11 +1005,11 @@ cmd_break (const unsigned char* args)
     int num_args, opt_len, addr;
 
     /* 80 == MAX_LABEL_LEN - 1 */
-    num_args = sscanf (args, "%10s%80s%1s", opt, addr_str, trash);
+    num_args = sscanf ((char *)args, "%10s%80s%1s", opt, addr_str, trash);
 
     if (num_args > 0) {
-	opt_len = strlen (opt);
-	if (strncasecmp (opt, "list", opt_len) == 0) {
+      opt_len = strlen ((char *)opt);
+      if (strncasecmp ((char *)opt, "list", opt_len) == 0) {
 	    if (num_args > 1)
 		warn_too_many_args ();
 	    list_breakpoints ();
@@ -1087,8 +1019,8 @@ cmd_break (const unsigned char* args)
 	    if (num_args > 2)
 		warn_too_many_args ();
 	    addr = parse_address (addr_str);
-	    if (strncasecmp (opt, "clear", opt_len) == 0) {
-		if (strcasecmp (addr_str, "all") == 0) {
+	    if (strncasecmp ((char *) opt, "clear", opt_len) == 0) {
+	      if (strcasecmp ((char *)addr_str, "all") == 0) {
 		    clear_all_breakpoints ();
 		    if (!gui_mode)
 			printf ("Cleared all breakpoints.\n");
@@ -1099,7 +1031,7 @@ cmd_break (const unsigned char* args)
 		else
 		    puts (BAD_ADDRESS);
 		return;
-	    } else if (strncasecmp (opt, "set", opt_len) == 0) {
+	    } else if (strncasecmp ((char *)opt, "set", opt_len) == 0) {
 		if (addr != -1)
 		    set_breakpoint (addr);
 		else
@@ -1183,7 +1115,7 @@ cmd_execute (const unsigned char* args)
 	return;
     }
 
-    if ((script = fopen (args, "r")) == NULL) {
+    if ((script = fopen ((char *)args, "r")) == NULL) {
         printf ("Cannot open script file \"%s\".\n", args);
 	stop_scripts = 1;
 	return;
@@ -1226,7 +1158,7 @@ cmd_file (const unsigned char* args)
     unsigned char* ext;
     int len, start, end, warn = 0;
 
-    len = strlen (args);
+    len = strlen ((char *)args);
     if (len == 0 || len > MAX_FILE_NAME_LEN - 1) {
 	if (gui_mode)
 	    printf ("ERR {Could not parse file name!}\n");
@@ -1234,21 +1166,19 @@ cmd_file (const unsigned char* args)
 	    printf ("syntax: file <file to load>\n");
 	return;
     }
-    strcpy (buf, args);
-    /* FIXME: Need to use portable path element separator characters
-       rather than assuming use of '/'. */
-    if ((ext = strrchr (buf, '.')) == NULL || strchr (ext, '/') != NULL) {
+    strcpy ((char *)buf, (char *)args);
+    if ((ext = (unsigned char *)strrchr ((char *)buf, '.')) == NULL) {
 	ext = buf + len;
-        strcat (buf, ".obj");
+        strcat ((char *)buf, ".obj");
     } else {
-	if (!gui_mode && strcasecmp (ext, ".sym") == 0) {
+      if (!gui_mode && strcasecmp ((char*)ext, ".sym") == 0) {
 	    if (read_sym_file (buf))
 		printf ("Failed to read symbols from \"%s.\"\n", buf);
 	    else
 		printf ("Read symbols from \"%s.\"\n", buf);
 	    return;
 	}
-	if (strcasecmp (ext, ".obj") != 0) {
+      if (strcasecmp ((char *)ext, ".obj") != 0) {
 	    if (gui_mode)
 		printf ("ERR {Only .obj files can be loaded.}\n");
 	    else
@@ -1256,6 +1186,7 @@ cmd_file (const unsigned char* args)
 	    return;
 	}
     }
+    strcpy ((char *)ext, ".obj");
     if (read_obj_file (buf, &start, &end) == -1) {
 	if (gui_mode)
 	    printf ("ERR {Failed to load \"%s.\"}\n", buf);
@@ -1263,12 +1194,7 @@ cmd_file (const unsigned char* args)
 	    printf ("Failed to load \"%s.\"\n", buf);
 	return;
     }
-    /* Success: reload same file next time machine is reset. */
-    if (start_file != NULL)
-    	free (start_file);
-    start_file = strdup (buf);
-
-    strcpy (ext, ".sym");
+    strcpy ((char *)ext, ".sym");
     if (read_sym_file (buf))
         warn = 1;
     REG (R_PC) = start;
@@ -1283,7 +1209,6 @@ cmd_file (const unsigned char* args)
 	if (warn)
 	    printf ("ERR {WARNING: No symbols are available.}\n");
     } else  {
-	strcpy (ext, ".obj");
 	printf ("Loaded \"%s\" and set PC to x%04X\n", buf, start);
 	if (warn)
 	    printf ("WARNING: No symbols are available.\n");
@@ -1300,16 +1225,6 @@ cmd_file (const unsigned char* args)
 
 
 static void
-cmd_finish (const unsigned char* args)
-{
-    no_args_allowed (args);
-    flush_console_input ();
-    finish_depth = 1;
-    run_until_stopped ();
-}
-
-
-static void
 cmd_help (const unsigned char* args) 
 {
     printf ("file <file>           -- file load (also sets PC to start of "
@@ -1318,7 +1233,6 @@ cmd_help (const unsigned char* args)
     printf ("break ...             -- breakpoint management\n\n");
 
     printf ("continue              -- continue execution\n");
-    printf ("finish                -- execute to end of current subroutine\n");
     printf ("next                  -- execute next instruction (full "
     	    "subroutine/trap)\n");
     printf ("step                  -- execute one step (into "
@@ -1340,8 +1254,6 @@ cmd_help (const unsigned char* args)
 
     printf ("execute <file name>   -- execute a script file\n\n");
 
-    printf ("reset                 -- reset LC-3 and reload last file\n\n");
-
     printf ("quit                  -- quit the simulator\n\n");
 
     printf ("help                  -- print this help\n\n");
@@ -1355,35 +1267,24 @@ parse_address (const unsigned char* addr)
 {
     symbol_t* label;
     unsigned char* fmt;
-    int value, negated;
+    int value;
     unsigned char trash[2];
 
     /* default matching order: symbol, hexadecimal */
     /* hexadecimal can optionally be preceded by x or X */
     /* decimal must be preceded by # */
 
-    if (addr[0] == '-') {
-	addr++;
-	negated = 1;
-    } else
-	negated = 0;
-    if ((label = find_symbol (addr, NULL)) != NULL)
-        value = label->addr;
-    else {
-	if (*addr == '#')
-	    fmt = "#%d%1s";
-	else if (tolower (*addr) == 'x')
-	    fmt = "x%x%1s";
-	else
-	    fmt = "%x%1s";
-	if (sscanf (addr, fmt, &value, trash) != 1 || value > 0xFFFF ||
-	    ((negated && value < 0) || (!negated && value < -0xFFFF)))
-	    return -1;
-    }
-    if (negated)
-        value = -value;
-    if (value < 0)
-	value += 0x10000;
+    if ((label = find_symbol ((char *)addr, NULL)) != NULL)
+        return label->addr;
+    if (*addr == '#')
+      fmt = (unsigned char*) "#%d%1s";
+    else if (tolower (*addr) == 'x')
+      fmt = (unsigned char *)"x%x%1s";
+    else
+      fmt = (unsigned char *)"%x%1s";
+    if (sscanf ((char *)addr, (char *)fmt, &value, trash) != 1 ||
+    	value < 0 || value > 0xFFFF)
+	return -1;
     return value;
 }
 
@@ -1397,7 +1298,7 @@ parse_range (const unsigned char* args, int* startptr, int* endptr,
 
     /* Split and count the arguments. */
     /* 80 == MAX_LABEL_LEN - 1 */
-    num_args = sscanf (args, "%80s%80s%1s", arg1, arg2, trash);
+    num_args = sscanf ((char *)args, "%80s%80s%1s", arg1, arg2, trash);
 
     /* If we have no automatic scaling for the range, we
        need both the start and the end to be specified. */
@@ -1413,7 +1314,7 @@ parse_range (const unsigned char* args, int* startptr, int* endptr,
 
     /* If the first argument is "more," start from the last stopping
        point.   Note that "more" also requires automatic scaling. */
-    if (last_end >= 0 && strcasecmp (arg1, "more") == 0) {
+    if (last_end >= 0 && strcasecmp ((char *)arg1, "more") == 0) {
 	start = last_end;
 	end = (start + 2 * scale) & 0xFFFF;
 	if (num_args > 1)
@@ -1504,32 +1405,25 @@ cmd_option (const unsigned char* args)
     unsigned char opt[11], onoff[6], trash[2];
     int num_args, opt_len, oval;
 
-    num_args = sscanf (args, "%10s%5s%1s", opt, onoff, trash);
+    num_args = sscanf ((char *)args, "%10s%5s%1s", opt, onoff, trash);
     if (num_args >= 2) {
-	opt_len = strlen (opt);
-	if (strcasecmp (onoff, "on") == 0)
+      opt_len = strlen ((char *)opt);
+      if (strcasecmp ((char *)onoff, "on") == 0)
 	    oval = 1;
-	else if (strcasecmp (onoff, "off") == 0)
+      else if (strcasecmp ((char *)onoff, "off") == 0)
 	    oval = 0;
 	else
 	    goto show_syntax;
         if (num_args > 2)
 	    warn_too_many_args ();
-        if (strncasecmp (opt, "flush", opt_len) == 0) {
-	    flush_on_start = oval;
+        if (strncasecmp ((char *)opt, "flush", opt_len) == 0) {
+	    flush_console = oval;
 	    if (!gui_mode)
 		printf ("Will %sflush the console input when starting.\n",
 			oval ? "" : "not ");
 	    return;
 	}
-        if (strncasecmp (opt, "keep", opt_len) == 0) {
-	    keep_input_on_stop = oval;
-	    if (!gui_mode)
-		printf ("Will %skeep remaining input when the LC-3 stops.\n", 
-			oval ? "" : "not ");
-	    return;
-	}
-        if (strncasecmp (opt, "device", opt_len) == 0) {
+        if (strncasecmp ((char *)opt, "device", opt_len) == 0) {
 	    rand_device = oval;
 	    if (!gui_mode)
 		printf ("Will %srandomize device interactions.\n",
@@ -1537,7 +1431,7 @@ cmd_option (const unsigned char* args)
 	    return;
 	}
 	/* GUI-only option: Delay memory updates to GUI until LC-3 stops? */
-        if (gui_mode && strncasecmp (opt, "delay", opt_len) == 0) {
+        if (gui_mode && strncasecmp ((char *)opt, "delay", opt_len) == 0) {
 	    /* Make sure that if the option is turned off while the GUI
 	       thinks that the processor is running, state is dumped
 	       immediately. */
@@ -1547,11 +1441,11 @@ cmd_option (const unsigned char* args)
 	    return;
 	}
 	/* Use stdin for LC-3 console input while running script? */
-        if (strncasecmp (opt, "stdin", opt_len) == 0) {
+        if (strncasecmp ((char *)opt, "stdin", opt_len) == 0) {
 	    script_uses_stdin = oval;
 	    if (!gui_mode)
-		printf ("Will %suse stdin for LC-3 console input during "
-			"script execution.\n", oval ? "" : "not ");
+		printf ("Will %s stdin for LC-3 console input during script "
+			"execution.\n", oval ? "" : "not ");
 	    if (script_depth > 0) {
 	        if (!oval)
 		    lc3in = sim_in;
@@ -1566,13 +1460,11 @@ cmd_option (const unsigned char* args)
 
 show_syntax:
     printf ("syntax: option <option> on|off\n   options include:\n");
+    printf ("      flush  -- flush console input each time LC-3 starts\n");
     printf ("      device -- simulate random device (keyboard/display)"
     	    "timing\n");
-    printf ("      flush  -- flush console input each time LC-3 starts\n");
-    printf ("      keep   -- keep remaining input when the LC-3 stops\n");
     printf ("      stdin  -- use stdin for LC-3 console input during script "
     	    "execution\n");
-    printf ("NOTE: all options are ON by default\n");
 }
 
 
@@ -1625,17 +1517,17 @@ static void
 cmd_register (const unsigned char* args)
 {
     static const unsigned char* const rname[NUM_REGS + 1] = {
-    	"R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7", 
-    	"PC", "IR", "PSR", "CC"
+      (unsigned char *)"R0", (unsigned char *)"R1", (unsigned char *)"R2", (unsigned char *)"R3", (unsigned char *)"R4", (unsigned char *)"R5", (unsigned char *)"R6", (unsigned char *)"R7", 
+      (unsigned char *)"PC", (unsigned char *)"IR", (unsigned char *)"PSR", (unsigned char *)"CC"
     };
     static const unsigned char* const cc_val[4] = {
-	"POSITIVE", "ZERO", "", "NEGATIVE"
+      (unsigned char *)"POSITIVE", (unsigned char *)"ZERO", (unsigned char *)"", (unsigned char *)"NEGATIVE"
     };
     unsigned char arg1[MAX_LABEL_LEN], arg2[MAX_LABEL_LEN], trash[2];
     int num_args, rnum, value, len;
 
     /* 80 == MAX_LABEL_LEN - 1 */
-    num_args = sscanf (args, "%80s%80s%1s", arg1, arg2, trash);
+    num_args = sscanf ((char *)args, "%80s%80s%1s", arg1, arg2, trash);
     if (num_args < 2) {
 	/* should never happen in GUI mode */
 	printf ("syntax: register <reg> <value>\n");
@@ -1649,15 +1541,15 @@ cmd_register (const unsigned char* args)
 	    puts ("Registers are R0...R7, PC, IR, PSR, and CC.");
 	    return;
 	}
-	if (strcasecmp (rname[rnum], arg1) == 0)
+	if (strcasecmp ((char *)(rname[rnum]),(char *)arg1) == 0)
 	    break;
     }
 
     /* Condition codes are a special case. */
     if (rnum == NUM_REGS) {
-	len = strlen (arg2);
+      len = strlen ((char *)arg2);
 	for (value = 0; value < 4; value++) {
-	    if (strncasecmp (arg2, cc_val[value], len) == 0) {
+	  if (strncasecmp ((char *)arg2, (char  *)(cc_val[value]), len) == 0) {
 		REG (R_PSR) &= ~0x0E00;
 		REG (R_PSR) |= ((value + 1) << 9);
 		if (gui_mode)
@@ -1695,49 +1587,6 @@ cmd_register (const unsigned char* args)
 
 
 static void 
-cmd_reset (const unsigned char* args)
-{
-    int addr;
-
-    if (script_depth > 0) {
-	/* Should never be executing a script in GUI mode, but check... */
-	if (!gui_mode)
-	    puts ("Cannot reset the LC-3 from within a script.");
-    	else
-	    puts ("ERR {Cannot reset the LC-3 from within a script.}");
-    	return;
-    }
-    no_args_allowed (args);
-
-    /* 
-       If in GUI mode, we need to write over all memory with zeroes
-       rather than just setting (so that disassembly info gets sent
-       to GUI).
-    */
-    if (gui_mode) {
-	interrupted_at_gui_request = 0;
-        for (addr = 0; addr < 65536; addr++)
-	    write_memory (addr, 0);
-    	gui_stop_and_dump ();
-    }
-
-    /* various bits of state to reset */
-    last_KBSR_read = 0;
-    last_DSR_read = 0;
-    have_mem_to_dump = 0;
-    need_a_stop_notice = 0;
-    sys_bpt_addr = -1;
-    finish_depth = 0;
-
-    init_machine ();
-
-    /* change focus in GUI, and turn off delay cursor */
-    if (gui_mode)
-	printf ("TOCODE\n");
-}
-
-
-static void 
 cmd_step (const unsigned char* args)
 {
     no_args_allowed (args);
@@ -1755,7 +1604,7 @@ cmd_translate (const unsigned char* args)
     int num_args, value;
 
     /* 80 == MAX_LABEL_LEN - 1 */
-    if ((num_args = sscanf (args, "%80s%1s", arg1, trash)) > 1)
+    if ((num_args = sscanf ((char *)args, "%80s%1s", arg1, trash)) > 1)
     	warn_too_many_args ();
 
     if (num_args < 1) {
@@ -1789,9 +1638,6 @@ gui_stop_and_dump ()
     /* Clear any breakpoint from an executing "next" command. */
     sys_bpt_addr = -1;
 
-    /* Clear any "finish" command state. */
-    finish_depth = 0;
-
     /* Tell the GUI about any changes to memory or registers. */
     dump_delayed_mem_updates ();
     print_registers ();
@@ -1814,13 +1660,18 @@ flush_console_input ()
 
     /* Check option and script level.  Flushing would consume 
        remainder of a script. */
-    if (!flush_on_start || script_depth > 0)
+    if (!flush_console || script_depth > 0)
         return;
 
     /* Read a character at a time... */
     p.fd = fileno (lc3in);
     p.events = POLLIN;
-    while (poll (&p, 1, 0) == 1 && (p.revents & POLLIN) != 0)
-	fgetc (lc3in);
+    while (poll (&p, 1, 0) == 1 && (p.revents & POLLIN) != 0) {
+      lost_char = fgetc (lc3in); //sws
+    }
+
+
+    
+
 }
 

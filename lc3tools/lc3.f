@@ -30,6 +30,10 @@
  * History:
  *	SSL	1	18 October 2003
  *		Copyright notices and Gnu Public License marker added.
+ *
+ * April 2011: fixed signedness and comment errors that were causing warnings
+ * and worrying students.  SWS, Dartmouth
+ *
  */
 
 %option noyywrap nounput
@@ -177,16 +181,14 @@ struct inst_t {
     ccode_t  ccode;
 };
 
-static int pass, line_num, num_errors, saw_orig, code_loc, saw_end;
+static int pass, line_num, num_errors, saw_orig, code_loc;
 static inst_t inst;
 static FILE* symout;
 static FILE* objout;
 
 static void new_inst_line ();
 static void bad_operands ();
-static void unterminated_string ();
 static void bad_line ();
-static void line_ignored ();
 static void parse_ccode (const char*);
 static void generate_instruction (operands_t, const char*);
 static void found_label (const char* lname);
@@ -202,15 +204,24 @@ HEX      [xX][-]?[0-9a-fA-F]+
 DECIMAL  [#]?[-]?[0-9]+
 IMMED    {HEX}|{DECIMAL}
 LABEL    [A-Za-z][A-Za-z_0-9]*
-STRING   \"([^\"]*|(\\\"))*\"
-UTSTRING \"[^\n\r]*
+/* strings with no carriage returns */
+STRING   \"([^"\n\r\\]*\\[^\n\r])*[^"\n\r\\]*\" 
+
+/* strings with carriage returns 
+STRLINE  ([^"\n\r\\]*\\[^\n\r])*[^"\n\r\\]*
+
+This needs to move down into the next section... 
+\"	                  {BEGIN (ls_string);}
+<ls_string>STRLINE        {yymore ();}
+<ls_string>[\\]?[\n][\r]? {line_num++; yymore ();}
+<ls_string>\"             {}
+*/
 
 /* operand and white space specification */
-SPACE     [ \t]
-OP_SEP    {SPACE}*,{SPACE}*
-COMMENT   [;][^\n\r]*
-EMPTYLINE {SPACE}*{COMMENT}?
-ENDLINE   {EMPTYLINE}\r?\n\r?
+SPACE    [ \t]
+OP_SEP   {SPACE}*,{SPACE}*
+COMMENT  [;][^\n\r]*
+ENDLINE  {SPACE}*{COMMENT}?\r?\n\r?
 
 /* operand formats */
 O_RRR  {SPACE}+{REGISTER}{OP_SEP}{REGISTER}{OP_SEP}{REGISTER}{ENDLINE}
@@ -222,14 +233,12 @@ O_R    {SPACE}+{REGISTER}{ENDLINE}
 O_I    {SPACE}+{IMMED}{ENDLINE}
 O_L    {SPACE}+{LABEL}{ENDLINE}
 O_S    {SPACE}+{STRING}{ENDLINE}
-O_UTS  {SPACE}+{UTSTRING}{ENDLINE}
 O_     {ENDLINE}
 
 /* need to define YY_INPUT... */
 
-/* exclusive lexing states to read operands, eat garbage lines, and
-   check for extra text after .END directive */
-%x ls_operands ls_garbage ls_finished
+/* exclusive lexing states to read operands and eat garbage lines */
+%x ls_operands ls_garbage
 
 %%
 
@@ -265,9 +274,9 @@ RET       {inst.op = OP_RET;   BEGIN (ls_operands);}
 \.STRINGZ {inst.op = OP_STRINGZ; BEGIN (ls_operands);}
 
     /* rules for directives */
-\.BLKW    {inst.op = OP_BLKW; BEGIN (ls_operands);}
-\.END     {saw_end = 1;       BEGIN (ls_finished);}
-\.ORIG    {inst.op = OP_ORIG; BEGIN (ls_operands);}
+\.BLKW    {inst.op = OP_BLKW;  BEGIN (ls_operands);}
+\.END     {return 0;}
+\.ORIG    {inst.op = OP_ORIG;  BEGIN (ls_operands);}
 
     /* rules for operand formats */
 <ls_operands>{O_RRR} {generate_instruction (O_RRR, yytext); BEGIN (0);}
@@ -295,18 +304,11 @@ RET       {inst.op = OP_RET;   BEGIN (ls_operands);}
 {LABEL}{SPACE}*: {found_label (yytext);}
 
     /* error handling??? */
-<ls_operands>{O_UTS} {unterminated_string (); BEGIN (0);}
-<ls_operands>[^\n\r]*{ENDLINE} {bad_operands (); BEGIN (0);}
-{O_RRR}|{O_RRI}|{O_RR}|{O_RI}|{O_RL}|{O_R}|{O_I}|{O_S}|{O_UTS} {
-    bad_operands ();
-}
+<ls_operands>[^\n\r]*<ENDLINE> {bad_operands (); BEGIN (0);}
+{O_RRR}|{O_RRI}|{O_RR}|{O_RI}|{O_RL}|{O_R}|{O_I}|{O_S} {bad_operands ();}
 
 . {BEGIN (ls_garbage);}
 <ls_garbage>[^\n\r]*{ENDLINE} {bad_line (); BEGIN (0);}
-
-    /* parsing after the .END directive */
-<ls_finished>{ENDLINE}|{EMPTYLINE}     {new_inst_line (); /* a blank line  */}
-<ls_finished>.*({ENDLINE}|{EMPTYLINE}) {line_ignored (); return 0;}
 
 %%
 
@@ -366,24 +368,8 @@ main (int argc, char** argv)
     num_errors = 0;
     saw_orig = 0;
     code_loc = 0x3000;
-    saw_end = 0;
     new_inst_line ();
     yylex ();
-    if (saw_orig == 0) {
-        if (num_errors == 0 && !saw_end)
-	    fprintf (stderr, "%3d: file contains only comments\n", line_num);
-        else {
-	    if (saw_end == 0)
-		fprintf (stderr, "%3d: no .ORIG or .END directive found\n", 
-			 line_num);
-	    else
-		fprintf (stderr, "%3d: no .ORIG directive found\n", line_num);
-	}
-	num_errors++;
-    } else if (saw_end == 0 ) {
-	fprintf (stderr, "%3d: no .END directive found\n", line_num);
-	num_errors++;
-    }
     printf ("%d errors found in first pass.\n", num_errors);
     if (num_errors > 0)
     	return 1;
@@ -392,9 +378,6 @@ main (int argc, char** argv)
 	return 3;
     }
     yyrestart (lc3in);
-    /* Return lexer to initial state.  It is otherwise left in ls_finished
-       if an .END directive was seen. */
-    BEGIN (0);
 
     puts ("STARTING PASS 2");
     pass = 2;
@@ -402,7 +385,6 @@ main (int argc, char** argv)
     num_errors = 0;
     saw_orig = 0;
     code_loc = 0x3000;
-    saw_end = 0;
     new_inst_line ();
     yylex ();
     printf ("%d errors found in second pass.\n", num_errors);
@@ -433,14 +415,6 @@ bad_operands ()
     new_inst_line ();
 }
 
-static void
-unterminated_string ()
-{
-    fprintf (stderr, "%3d: unterminated string\n", line_num);
-    num_errors++;
-    new_inst_line ();
-}
-
 static void 
 bad_line ()
 {
@@ -448,14 +422,6 @@ bad_line ()
 	     line_num);
     num_errors++;
     new_inst_line ();
-}
-
-static void 
-line_ignored ()
-{
-    if (pass == 1)
-	fprintf (stderr, "%3d: WARNING: all text after .END ignored\n",
-		 line_num);
 }
 
 static int
@@ -471,8 +437,8 @@ read_val (const char* s, int* vptr, int bits)
 	    s++;
 	v = strtol (s, &trash, 10);
     }
-    if (0x10000 > v && 0x8000 <= v)
-        v |= -65536L;   /* handles 64-bit longs properly */
+    if (v >= 0x8000)
+        v |= 0xFFFF0000;
     if (v < -(1L << (bits - 1)) || v >= (1L << bits)) {
 	fprintf (stderr, "%3d: constant outside of allowed range\n", line_num);
 	num_errors++;
@@ -501,14 +467,14 @@ write_value (int val)
 static char*
 sym_name (const char* name)
 {
-    unsigned char* local = strdup (name);
+    unsigned char* local = (unsigned char *)strdup (name);
     unsigned char* cut;
 
     /* Not fast, but no limit on label length...who cares? */
     for (cut = local; *cut != 0 && !isspace (*cut) && *cut != ':'; cut++);
     *cut = 0;
 
-    return local;
+    return (char *)local;
 }
 
 static int
@@ -521,8 +487,8 @@ find_label (const char* optarg, int bits)
     if (pass == 1)
         return 0;
 
-    local = sym_name (optarg);
-    label = find_symbol (local, NULL);
+    local = (unsigned char *)sym_name (optarg);
+    label = find_symbol ((char *)local, NULL);
     if (label != NULL) {
 	value = label->addr;
 	if (bits != 16) { /* Everything except 16 bits is PC-relative. */
@@ -560,12 +526,12 @@ generate_instruction (operands_t operands, const char* opstr)
 	bad_operands ();
 	return;
     }
-    o1 = opstr;
+    o1 = (unsigned char *)opstr;
     while (isspace (*o1)) o1++;
-    if ((o2 = strchr (o1, ',')) != NULL) {
+    if ((o2 = (unsigned char *)strchr ((char *)o1, ',')) != NULL) {
         o2++;
 	while (isspace (*o2)) o2++;
-	if ((o3 = strchr (o2, ',')) != NULL) {
+	if ((o3 = (unsigned char *)strchr ((char *)o2, ',')) != NULL) {
 	    o3++;
 	    while (isspace (*o3)) o3++;
 	}
@@ -573,7 +539,7 @@ generate_instruction (operands_t operands, const char* opstr)
     	o3 = NULL;
     if (inst.op == OP_ORIG) {
 	if (saw_orig == 0) {
-	    if (read_val (o1, &code_loc, 16) == -1)
+	    if (read_val ((char *)o1, &code_loc, 16) == -1)
 		/* Pick a value; the error prevents code generation. */
 		code_loc = 0x3000; 
 	    else {
@@ -604,9 +570,9 @@ generate_instruction (operands_t operands, const char* opstr)
     if ((pre_parse[operands] & PP_R3) != 0)
         r3 = o3[1] - '0';
     if ((pre_parse[operands] & PP_I2) != 0)
-        (void)read_val (o2, &val, 9);
+        (void)read_val ((char *)o2, &val, 9);
     if ((pre_parse[operands] & PP_L2) != 0)
-        val = find_label (o2, 9);
+        val = find_label ((char *)o2, 9);
 
     switch (inst.op) {
 	/* Generate real instruction opcodes. */
@@ -614,7 +580,7 @@ generate_instruction (operands_t operands, const char* opstr)
 	    if (operands == O_RRI) {
 	    	/* Check or read immediate range (error in first pass
 		   prevents execution of second, so never fails). */
-	        (void)read_val (o3, &val, 5);
+	        (void)read_val ((char *)o3, &val, 5);
 		write_value (0x1020 | (r1 << 9) | (r2 << 6) | (val & 0x1F));
 	    } else
 		write_value (0x1000 | (r1 << 9) | (r2 << 6) | r3);
@@ -623,16 +589,16 @@ generate_instruction (operands_t operands, const char* opstr)
 	    if (operands == O_RRI) {
 	    	/* Check or read immediate range (error in first pass
 		   prevents execution of second, so never fails). */
-	        (void)read_val (o3, &val, 5);
+	        (void)read_val ((char *)o3, &val, 5);
 		write_value (0x5020 | (r1 << 9) | (r2 << 6) | (val & 0x1F));
 	    } else
 		write_value (0x5000 | (r1 << 9) | (r2 << 6) | r3);
 	    break;
 	case OP_BR:
 	    if (operands == O_I)
-	        (void)read_val (o1, &val, 9);
+	        (void)read_val ((char *)o1, &val, 9);
 	    else /* O_L */
-	        val = find_label (o1, 9);
+	        val = find_label ((char *)o1, 9);
 	    write_value (inst.ccode | (val & 0x1FF));
 	    break;
 	case OP_JMP:
@@ -640,9 +606,9 @@ generate_instruction (operands_t operands, const char* opstr)
 	    break;
 	case OP_JSR:
 	    if (operands == O_I)
-	        (void)read_val (o1, &val, 11);
+	        (void)read_val ((char *)o1, &val, 11);
 	    else /* O_L */
-	        val = find_label (o1, 11);
+	        val = find_label ((char *)o1, 11);
 	    write_value (0x4800 | (val & 0x7FF));
 	    break;
 	case OP_JSRR:
@@ -655,7 +621,7 @@ generate_instruction (operands_t operands, const char* opstr)
 	    write_value (0xA000 | (r1 << 9) | (val & 0x1FF));
 	    break;
 	case OP_LDR:
-	    (void)read_val (o3, &val, 6);
+	    (void)read_val ((char *)o3, &val, 6);
 	    write_value (0x6000 | (r1 << 9) | (r2 << 6) | (val & 0x3F));
 	    break;
 	case OP_LEA:
@@ -674,11 +640,11 @@ generate_instruction (operands_t operands, const char* opstr)
 	    write_value (0xB000 | (r1 << 9) | (val & 0x1FF));
 	    break;
 	case OP_STR:
-	    (void)read_val (o3, &val, 6);
+	    (void)read_val ((char *)o3, &val, 6);
 	    write_value (0x7000 | (r1 << 9) | (r2 << 6) | (val & 0x3F));
 	    break;
 	case OP_TRAP:
-	    (void)read_val (o1, &val, 8);
+	    (void)read_val ((char *)o1, &val, 8);
 	    write_value (0xF000 | (val & 0xFF));
 	    break;
 
@@ -693,10 +659,10 @@ generate_instruction (operands_t operands, const char* opstr)
 	/* Generate non-trap pseudo-ops. */
     	case OP_FILL:
 	    if (operands == O_I) {
-		(void)read_val (o1, &val, 16);
+		(void)read_val ((char *)o1, &val, 16);
 		val &= 0xFFFF;
 	    } else /* O_L */
-		val = find_label (o1, 16);
+		val = find_label ((char *)o1, 16);
 	    write_value (val);
     	    break;
 	case OP_RET:   
@@ -721,16 +687,13 @@ generate_instruction (operands_t operands, const char* opstr)
 			/* FIXME: support others too? */
 			default: write_value (str[1]); str++; break;
 		    }
-		} else {
-		    if (str[0] == '\n')
-		        line_num++;
+		} else
 		    write_value (*str);
-		}
 	    }
 	    write_value (0);
 	    break;
 	case OP_BLKW:
-	    (void)read_val (o1, &val, 16);
+	    (void)read_val ((char *)o1, &val, 16);
 	    val &= 0xFFFF;
 	    while (val-- > 0)
 	        write_value (0x0000);
@@ -768,13 +731,10 @@ parse_ccode (const char* ccstr)
 static void
 found_label (const char* lname) 
 {
-    unsigned char* local = sym_name (lname);
+    unsigned char* local = (unsigned char *)sym_name (lname);
 
     if (pass == 1) {
-	if (saw_orig == 0) {
-	    fprintf (stderr, "%3d: label appears before .ORIG\n", line_num);
-	    num_errors++;
-	} else if (add_symbol (local, code_loc, 0) == -1) {
+	if (add_symbol ((char *)local, code_loc, 0) == -1) {
 	    fprintf (stderr, "%3d: label %s has already appeared\n", 
 	    	     line_num, local);
 	    num_errors++;

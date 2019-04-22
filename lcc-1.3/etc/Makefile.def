@@ -50,8 +50,8 @@ LCCDIR = __INSTALL_DIR__
 BASEDIR = __TOP_DIR__
 # End of configuration block.
 
-CFLAGS  = -g -DLCCDIR='"${LCCDIR}/"' -DBASEDIR='"${BASEDIR}/"'
-LDFLAGS = -g
+CFLAGS  = -g -m32 -DLCCDIR='"${LCCDIR}/"' -DBASEDIR='"${BASEDIR}/"'
+LDFLAGS = -g -m32
 LC3AS   = ./lc3as
 
 %.o: %.c

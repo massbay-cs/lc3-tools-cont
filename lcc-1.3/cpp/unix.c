@@ -4,6 +4,12 @@
 #include <string.h>
 #include "cpp.h"
 
+/* fix for newer Mac environments.  sws, dartmouth, april 2011 */
+#ifdef memmove
+#undef memmove
+#endif
+
+
 extern	int getopt(int, char *const *, const char *);
 extern	char	*optarg, rcsid[];
 extern	int	optind;

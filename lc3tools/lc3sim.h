@@ -92,9 +92,8 @@ enum format_t {
 
 typedef enum inst_flag_t inst_flag_t;
 enum inst_flag_t {
-    FLG_NONE       = 0,
-    FLG_SUBROUTINE = 1,
-    FLG_RETURN     = 2
+    FLG_NONE = 0,
+    FLG_SUBROUTINE = 1
 };
 
 
@@ -107,6 +106,8 @@ enum reg_num_t {
 	NUM_REGS
 };
 
+//extern int lc3_register[NUM_REGS];
+#define REG(i) lc3_register[(i)]
 
 extern int read_memory (int addr);
 extern void write_memory (int addr, int value);

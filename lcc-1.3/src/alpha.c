@@ -5161,11 +5161,13 @@ static void stabinit(char *file, int argc, char *argv[]) {
 
 /* stabline - emit stab entry for source coordinate *cp */
 static void stabline(Coordinate *cp) {
+#if 0
         if (cp->file && cp->file != currentfile) {
                 print(".file 2,\"%s\"\n", cp->file);
                 currentfile = cp->file;
         }
         print(".loc 2,%d\n", cp->y);
+#endif
 }
 
 /* stabsym - output a stab entry for symbol p */

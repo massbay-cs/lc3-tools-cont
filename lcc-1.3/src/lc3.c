@@ -2299,7 +2299,8 @@ static void progbeg(int argc, char *argv[]) {
 	lc3_addimm(5,6,0);//r5=xefff
 	print("LD R4, GLOBAL_DATA_POINTER\n");		//puts x3000 in r6
 	print("LD R7, GLOBAL_MAIN_POINTER\n");		//puts x3000 in r6
-	print("jsrr R7\n");
+	print("LD R0, GLOBAL_MAIN_POINTER\n");		//puts x3000 in r6
+	print("jsrr R0\n");
 	print("HALT\n\n");
 	print("GLOBAL_DATA_POINTER .FILL GLOBAL_DATA_START\n");
 	print("GLOBAL_MAIN_POINTER .FILL main\n");
@@ -3172,19 +3173,23 @@ static char *currentfile;
 
 /* stabinit - initialize stab output */
 static void stabinit(char *file, int argc, char *argv[]) {
+#if 0
 	if (file) {
 		print(".file 2,\"%s\"\n", file);
 		currentfile = file;
 	}
+#endif
 }
 
 /* stabline - emit stab entry for source coordinate *cp */
 static void stabline(Coordinate *cp) {
+#if 0
 	if (cp->file && cp->file != currentfile) {
 		print(".file 2,\"%s\"\n", cp->file);
 		currentfile = cp->file;
 	}
 	print(".loc 2,%d\n", cp->y);
+#endif
 }
 
 /* stabsym - output a stab entry for symbol p */

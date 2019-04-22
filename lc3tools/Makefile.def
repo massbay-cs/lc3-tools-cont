@@ -54,8 +54,8 @@ BUTTON_FONT = __BUTTON_FONT__
 CONSOLE_FONT = __CONSOLE_FONT__
 # End of configuration block.
 
-CFLAGS  = -g -Wall
-LDFLAGS = -g
+CFLAGS  = -g -Wall -m32
+LDFLAGS = -g -m32
 LC3AS   = ./lc3as
 
 ALL: dist_lc3as dist_lc3convert dist_lc3sim dist_lc3sim-tk
@@ -70,15 +70,13 @@ distclean: clean clear
 	${RM} -f Makefile
 
 install: ALL
-	${MKDIR} -p ${INSTALL_DIR}
-	-${CP} -f lc3as${EXE} lc3convert${EXE} lc3sim${EXE} lc3os.obj \
-		lc3os.sym lc3sim-tk COPYING NO_WARRANTY README ${INSTALL_DIR}
+	${MKDIR} -p ${INSTALL_DIR} ${INSTALL_DIR}/lc3os
+	-${CP} -f lc3as${EXE} lc3convert${EXE} lc3sim${EXE} lc3sim-tk ${INSTALL_DIR}
+	-${CP} -f lc3os.obj lc3os.sym ${INSTALL_DIR}/lc3os/
 	${CHMOD} 555 ${INSTALL_DIR}/lc3as${EXE} \
 		${INSTALL_DIR}/lc3convert${EXE} ${INSTALL_DIR}/lc3sim${EXE} \
 		${INSTALL_DIR}/lc3sim-tk
-	${CHMOD} 444 ${INSTALL_DIR}/lc3os.obj ${INSTALL_DIR}/lc3os.sym \
-		${INSTALL_DIR}/COPYING ${INSTALL_DIR}/NO_WARRANTY      \
-		${INSTALL_DIR}/README
+	${CHMOD} 444 ${INSTALL_DIR}/lc3os/lc3os.obj ${INSTALL_DIR}/lc3os/lc3os.sym
 
 %.o: %.c
 	${GCC} -c ${CFLAGS} -o $@ $<
@@ -123,16 +121,13 @@ dist_lc3convert_clear: dist_lc3convert_clean
 # Makefile fragment for lc3sim
 #
 
-dist_lc3sim: lc3sim${EXE} lc3os.obj lc3os.sym
+dist_lc3sim: lc3sim${EXE} lc3os.obj
 
 lc3sim${EXE}: lc3sim.o sim_symbol.o
 	${GCC} ${LDFLAGS} ${RLIPATH} -o lc3sim${EXE} \
 		lc3sim.o sim_symbol.o ${RLLPATH} ${OS_SIM_LIBS}
 
 lc3os.obj: ${LC3AS} lc3os.asm
-	${LC3AS} lc3os
-
-lc3os.sym: ${LC3AS} lc3os.asm
 	${LC3AS} lc3os
 
 lc3sim.o: lc3sim.c lc3.def lc3sim.h symbol.h
@@ -163,6 +158,7 @@ lc3sim-tk: lc3sim-tk.def
 	${CHMOD} u+x lc3sim-tk
 
 dist_lc3sim-tk_clean::
+	${RM} -f lc3sim-tk
 
 dist_lc3sim-tk_clear::
 	${RM} -f lc3sim-tk

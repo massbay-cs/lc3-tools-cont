@@ -118,9 +118,6 @@ DEF_INST (BR, FMT_CL, 0xF000, 0x0000, FLG_NONE, {
 DEF_P_OP (RET, FMT_, 0xFFFF, 0xC1C0);
 
 DEF_INST (JMP, FMT_R, 0xFE3F, 0xC000, FLG_NONE, {
-    if (I_BaseR == R_R7) {
-        ADD_FLAGS (FLG_RETURN);
-    }
     REG (R_PC) = REG (I_BaseR);
 });
 

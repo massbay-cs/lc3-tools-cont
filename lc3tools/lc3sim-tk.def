@@ -45,7 +45,7 @@ proc set_default_options {} {
     global option
 
     set option(code_width)     60
-    set option(code_height)    40
+    set option(code_height)    10
     set option(code_font)      @@CODE_FONT@@
     set option(code_bg)        Blue4
     set option(code_fg)        Yellow
@@ -66,32 +66,6 @@ proc set_default_options {} {
     set option(delay)          on
 }
 
-
-# Fills variables and widgets in options window with values from 
-# option strings.  Used when options window is created and when values
-# are restored to default values (which are only known as strings).
-
-proc fill_option_window {} {
-    global opt_list option optval
-
-    foreach opt $opt_list {
-	set name  [lindex $opt 0]
-        set optval($name) $option($name)
-	switch -exact [lindex $opt 2] {
-	    font {
-		set optval($name,f) [lindex $option($name) 0]
-		set optval($name,p) [lindex $option($name) 1]
-		set optval($name,b) [lindex $option($name) 2]
-	    }
-	}
-    }
-}
-
-# Using data from the corresponding widget(s) in the options window,
-# apply a single option and create an appropriate option string for
-# that option.  Used when individual options are set and indirectly
-# whenever all options are saved or applied.
-
 proc apply_option {opt} {
     global option optval
 
@@ -99,22 +73,24 @@ proc apply_option {opt} {
     set plist [lindex $opt 3]
     switch -exact [lindex $opt 2] {
 	font {
-	    set optval($name) \
-	    	[list $optval($name,f) $optval($name,p) $optval($name,b)]
-	}
-	color {
-	    catch {.options.$name.b config -bg $optval($name)}
+	    set optval($name) [lreplace $optval($name) 1 1 $optval($name,p)]
 	}
     }
     foreach item $plist {
 	eval "[lindex $item 0] config [lindex $item 1] \"$optval($name)\""
 	set option($name) $optval($name)
     }
+    switch -exact [lindex $opt 2] {
+	font {
+	    set optval($name,f) [lindex $option($name) 0]
+	    set optval($name,p) [lindex $option($name) 1]
+	    set optval($name,b) [lindex $option($name) 2]
+	}
+	color {
+	    .options.$name.b config -bg $optval($name)
+	}
+    }
 }
-
-# Applies all options as above, then writes simulator options to the
-# simulator.  Used when "Apply" or "Save" [options] are pressed, and
-# when default settings are restored.
 
 proc apply_all_options {} {
     global opt_list
@@ -125,12 +101,6 @@ proc apply_all_options {} {
 
 proc apply_sim_options {} {
     global sim option
-
-    # Note that the "keep" option in lc3sim is only meaningful for 
-    # terminal input; since the GUI separates the input channels, there 
-    # is no chance of LC-3 input being used as simulator commands, and 
-    # thus no point in not keeping it.  Turning keep off and flush are 
-    # also equivalent in the GUI, so the functionality is still available.
 
     foreach name {flush device delay} {
 	puts $sim "option $name $option($name)"
@@ -154,17 +124,18 @@ proc write_option_file {} {
     } msg]} {
         tk_messageBox -message $msg
     } {
-        tk_messageBox -message "Options saved." -parent .options
+        tk_messageBox -message "Options saved."
     }
 }
 
-proc fontmenu {oname mname opt} {
+proc fontmenu {oname mname} {
     menu $mname -tearoff 0
     foreach font [font families] {
 	if {[font metrics [list $font] -fixed]} {
 	    $mname add command -label "$font" -font [list $font] -command "
+		set optval($oname) \
+		    \[lreplace \$optval($oname) 0 0 [list $font]]
 		set optval($oname,f) \"$font\"
-		apply_option [list $opt]
 	    "
 	}
     }
@@ -172,19 +143,21 @@ proc fontmenu {oname mname opt} {
     foreach font [font families] {
 	if {![font metrics [list $font] -fixed]} {
 	    $mname add command -label "$font" -font [list $font] -command "
+		set optval($oname) \
+		    \[lreplace \$optval($oname) 0 0 [list $font]]
 		set optval($oname,f) \"$font\"
-		apply_option [list $opt]
 	    "
 	}
     }
 }
 
-proc stylemenu {oname mname opt} {
+proc stylemenu {oname mname} {
     menu $mname -tearoff 0
     foreach style {normal bold italic} {
 	$mname add command -label $style -command "
+	    set optval($oname) \
+		\[lreplace \$optval($oname) 2 2 $style\]
 	    set optval($oname,b) $style
-	    apply_option [list $opt]
 	"
     }
 }
@@ -228,10 +201,9 @@ proc change_options {} {
 	    {break_fg       "Breakpoint Foreground" color
 	     {{{.code tag} {break -foreground}}}}
 	    {button_font    "Button Font"     font  
-	     {{.ctrl.n -font} {.ctrl.s -font} {.ctrl.x -font} {.ctrl.c -font}
-	      {.ctrl.f -font} {.ctrl.p -font} {.ctrl.bca -font} 
-	      {.in.browse -font} 
-	      {.misc.reset -font} {.misc.options -font} {.misc.quit -font}
+	     {{.ctrl.n -font} {.ctrl.s -font} {.ctrl.s -font} {.ctrl.c -font}
+	      {.ctrl.p -font} {.ctrl.bca -font} 
+	      {.in.browse -font} {.in.quit -font}
 	     }}
 	    {console_width  "Console Width"   int   {{.console.t -width}}}
 	    {console_height "Console Height"  int   {{.console.t -height}}}
@@ -246,12 +218,14 @@ proc change_options {} {
 	button .options.ctrltop.def -width 19 -text "Use Default Values" \
 	    -command {
 	    set_default_options
-	    fill_option_window
+	    foreach opt $opt_list {
+		set name [lindex $opt 0]
+	        set optval($name) $option($name)
+	    }
 	    apply_all_options
 	}
 	pack .options.ctrltop.def -side right -padx 5
 	pack .options.ctrltop -side top -expand t -fill x -pady 5
-	fill_option_window
 	foreach opt $opt_list {
 	    set name    [lindex $opt 0]
 	    set visname [lindex $opt 1]
@@ -273,35 +247,33 @@ proc change_options {} {
 		font {
 		    menubutton .options.$name.m -width 15 \
 		    	-menu .options.$name.m.m -textvariable optval($name,f)
-		    fontmenu $name .options.$name.m.m $opt
+		    fontmenu $name .options.$name.m.m
 		    entry .options.$name.p -width 2 \
 		    	-textvariable optval($name,p)
 		    set optval($name,p) [lindex $optval($name) 1]
 		    bind .options.$name.p <KeyPress-Return> "
+			set optval($name) \
+			    \[lreplace \$optval($name) 1 1 \$optval($name,p)\]
 		        apply_option [list $opt]
 		    "
 		    menubutton .options.$name.b -width 8 \
 		    	-menu .options.$name.b.m -textvariable optval($name,b)
-		    stylemenu $name .options.$name.b.m $opt
+		    stylemenu $name .options.$name.b.m
 		    pack .options.$name.m -side left -padx 5
 		    pack .options.$name.b -side right -padx 5 
 		    pack .options.$name.p -expand t -fill x
 		}
 		color {
-		    button .options.$name.b -width 20 -bg $optval($name) \
+		    button .options.$name.b -width 20 \
 		    	-command "
-		        set acolor \
-			    \[tk_chooseColor -initialcolor \$optval($name) \
-			      -parent .options\]
-			if {\$acolor != {}} {
-			    set optval($name) \$acolor
-			    apply_option [list $opt]
-			    catch {.options.$name.b config -bg \$optval($name)}
-			}
+		        set optval($name) \
+			    \[tk_chooseColor -initialcolor \$optval($name)\]
+		        .options.$name.b config -bg \$optval($name)
 		    " 
 		    pack .options.$name.b -side left -expand t -fill x -padx 5
 		}
 	    }
+	    apply_option "$opt"
 	    pack .options.$name -side top -expand t -fill x -pady 2
 	}
 
@@ -421,7 +393,6 @@ pack .mem -side top -fill x -pady 5
 frame .ctrl
 button .ctrl.n -text Next -command {puts $sim n} -font $option(button_font)
 button .ctrl.s -text Step -command {puts $sim s} -font $option(button_font)
-button .ctrl.f -text Finish -command {puts $sim fin} -font $option(button_font)
 button .ctrl.c -text Continue -command {puts $sim c} -font $option(button_font)
 button .ctrl.x -text Stop -command {puts $sim x} -font $option(button_font) \
 	-state disabled
@@ -431,33 +402,11 @@ button .ctrl.bca -text "Clear All Breakpoints" -command clear_all_breakpoints \
 	-font $option(button_font) -state disabled
 pack .ctrl.n -side left -padx 5
 pack .ctrl.s -side left -padx 5
-pack .ctrl.f -side left -padx 5
 pack .ctrl.c -side left -padx 5
 pack .ctrl.x -side left -padx 5
 pack .ctrl.p -side right -padx 5
 pack .ctrl.bca -side right -padx 5
 pack .ctrl -side top -fill x -pady 5
-
-frame .misc
-button .misc.reset -text "Reset LC-3" -font $option(button_font) \
-    -command reset_machine
-button .misc.options -text Options -font $option(button_font) \
-    -command change_options
-button .misc.quit -text Quit -font $option(button_font) -command {set halt 1}
-pack .misc.reset -side left -padx 5
-pack .misc.quit -side right -padx 5
-pack .misc.options -padx 5
-pack .misc -side bottom -fill x -pady 5
-
-frame .in
-label .in.l -width 13 -text "File to Load" -font $option(code_font)
-entry .in.e -width 25 -font $option(code_font) -textvariable file
-bind .in.e <KeyPress-Return> load_file
-button .in.browse -text Browse -font $option(button_font) -command pick_file
-pack .in.l -side left
-pack .in.browse -side right -padx 5
-pack .in.e -expand t -fill x -padx 5
-pack .in -side bottom -fill x -pady 5
 
 pack .code_y -side right -fill y
 pack .code -expand t -fill both
@@ -504,12 +453,27 @@ proc pick_file {} {
 
     set f [tk_getOpenFile -defaultextension .obj \
 	-filetypes {{"Object File" .obj}} -initialdir . \
-	-initialfile $file -title "Load which file?"]
+	-title "Load which file?"]
     if {$f != ""} {
 	set file $f
 	load_file
     }
 }
+
+frame .in
+label .in.l -width 13 -text "File to Load" -font $option(code_font)
+entry .in.e -width 25 -font $option(code_font) -textvariable file
+bind .in.e <KeyPress-Return> load_file
+button .in.browse -text Browse -font $option(button_font) -command pick_file
+button .in.options -text Options -font $option(button_font) \
+    -command change_options
+button .in.quit -text Quit -font $option(button_font) -command {set halt 1}
+pack .in.l -side left
+pack .in.e -side left
+pack .in.browse -side left -padx 5
+pack .in.options -side left -padx 5
+pack .in.quit -side right -padx 5
+pack .in -side bottom -fill x -pady 5
 
 set bpoints {}
 
@@ -552,12 +516,10 @@ proc highlight_pc {running} {
     if {$running} {
         .ctrl.n configure -state disabled
         .ctrl.s configure -state disabled
-        .ctrl.f configure -state disabled
         .ctrl.c configure -state disabled
         .ctrl.x configure -state normal
 	bind .code <KeyPress-n> {}
 	bind .code <KeyPress-s> {}
-	bind .code <KeyPress-f> {}
 	bind .code <KeyPress-c> {}
     } {
 	scan $reg(R8) "x%x" pc
@@ -566,13 +528,11 @@ proc highlight_pc {running} {
 	.code see $pcline
         .ctrl.n configure -state normal
         .ctrl.s configure -state normal
-        .ctrl.f configure -state normal
         .ctrl.c configure -state normal
         .ctrl.x configure -state disabled
-	bind .code <KeyPress-n> {puts $sim next}
-	bind .code <KeyPress-s> {puts $sim step}
-	bind .code <KeyPress-f> {puts $sim finish}
-	bind .code <KeyPress-c> {puts $sim continue}
+	bind .code <KeyPress-n> {puts $sim n}
+	bind .code <KeyPress-s> {puts $sim s}
+	bind .code <KeyPress-c> {puts $sim c}
     }
 }
 
@@ -609,16 +569,6 @@ proc clear_all_breakpoints {} {
     while {$bpoints != ""} {clear_break [lindex $bpoints 0]}
 }
 
-proc reset_machine {} {
-    global sim
-
-    # Easier to handle this way, although creates more work in simulator. 
-    clear_all_breakpoints
-
-    puts $sim reset
-    show_delay 1
-}
-
 proc insert_to_console {data} {
     .console.t configure -state normal
     .console.t insert end "$data"
@@ -630,9 +580,9 @@ proc delayed_read_lc3 {} {
     global lc3_console
 
     set line [read $lc3_console]
-    if {$line == ""} {
-    	return
-    }
+#    if {$line == ""} {
+#    	return
+#    }
 
     insert_to_console "$line"
 }
@@ -762,7 +712,7 @@ proc open_lc3channel {sock ip_addr port} {
         error "contacted by bad IP address (not loopback)"
     }
     set lc3_console $sock
-    fconfigure $lc3_console -blocking 0 -buffering none
+    fconfigure $lc3_console -blocking 0 -buffering none -translation lf
     fileevent $lc3_console readable read_lc3
 }
 
@@ -779,17 +729,23 @@ scrollbar .console.t_y -command {.console.t yview} -orient vertical
 pack .console.t_y -side right -fill y
 pack .console.t -expand t -fill both
 
+
 bind .console <KeyPress> {
-    if {"%A" != ""} {
+    if {"%K" == "Return"} {
+	puts -nonewline $lc3_console "\n"
+    } elseif {"%K" == "Tab"} {
+	puts -nonewline $lc3_console "\t"
+    } elseif {"%A" != ""} {
 	puts -nonewline $lc3_console %A
     }
 }
 
+
 # could be annoying...
 #bind . <KeyPress-Escape> {set halt 1}
 
-bind . <Destroy> {exit}
-bind .console <Destroy> {set halt 1}
+#bind . <Destroy> {exit}
+#bind .console <Destroy> {set halt 1}
 
 set sim [open "| $path(lc3sim) -gui $argv" r+]
 fconfigure $sim -blocking 0 -buffering none
@@ -805,9 +761,6 @@ vwait lc3_listen
 if {![info exists lc3_console]} {
     # show error message before exiting
     update  
-    # avoid self-deadlock issues with some versions of WISH
-    bind . <Destroy> {}
-    bind .console <Destroy> {}
     exit
 }
 
@@ -841,9 +794,6 @@ show_delay 0
 catch {vwait halt}
 update
 fileevent $sim readable {}
-puts $sim quit
-# avoid self-deadlock issues with some versions of WISH
-bind . <Destroy> {}
-bind .console <Destroy> {}
+puts $sim q
 exit
 

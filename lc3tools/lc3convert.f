@@ -45,14 +45,13 @@
 #include <unistd.h>
 
 
-static int line_num, num_errors, parse_hex, binary_value, bin_count, hex_count;
+static int line_num, num_errors, parse_hex, binary_value, bin_count;
 static FILE* objout;
 
 static void new_inst_line ();
 static void bad_line ();
 static void generate_bin_instruction (int value);
 static void generate_hex_instruction (const char* val_str);
-static void end_current_bin_line ();
 
 %}
 
@@ -90,11 +89,23 @@ ENDLINE  {SPACE}*{COMMENT}?\r?\n\r?
 	    binary_value++;
     }
 }
-<ls_binary>{ENDLINE} {end_current_bin_line ();}
-<ls_binary><<EOF>> {end_current_bin_line (); return 0;}
+<ls_binary>{ENDLINE} {
+    if (bin_count == 0) { 
+        /* a blank line */
+	new_inst_line ();
+    } else {
+	if (bin_count < 16) {
+	    fprintf (stderr, "%3d: line contains only %d digits\n", line_num,
+		     bin_count);
+	    num_errors++;
+	}
+	generate_bin_instruction (binary_value);
+    }
+}
+
 
     /* hexadecimal parser */
-<ls_hexadecimal>{HEX} {generate_hex_instruction (yytext);}
+<ls_hexadecimal>{HEX}{ENDLINE} {generate_hex_instruction (yytext);}
 <ls_hexadecimal>{ENDLINE} {new_inst_line (); /* a blank line */ }
 
 
@@ -106,11 +117,9 @@ ENDLINE  {SPACE}*{COMMENT}?\r?\n\r?
 
 <ls_binary>. {BEGIN (ls_bin_garbage);}
 <ls_bin_garbage>[^\n\r]*{ENDLINE} {bad_line (); BEGIN (ls_binary);}
-<ls_bin_garbage><<EOF>> {bad_line (); BEGIN (ls_binary); return 0;}
 
 <ls_hexadecimal>. {BEGIN (ls_hex_garbage);}
 <ls_hex_garbage>[^\n\r]*{ENDLINE} {bad_line (); BEGIN (ls_hexadecimal);}
-<ls_hex_garbage><<EOF>> {bad_line (); BEGIN (ls_hexadecimal); return 0;}
 
 %%
 
@@ -184,7 +193,6 @@ new_inst_line ()
 {
     binary_value = 0;
     bin_count = 0;
-    hex_count = 0;
     line_num++;
 }
 
@@ -203,11 +211,9 @@ read_val (const char* s, int* vptr, int bits)
     char* trash;
     long v;
 
-    if (*s == 'x' || *s == 'X')
-	s++;
     v = strtol (s, &trash, 16);
-    if (0x10000 > v && 0x8000 <= v)
-        v |= -65536L;   /* handles 64-bit longs properly */
+    if (v >= 0x8000)
+        v |= 0xFFFF0000;
     if (v < -(1L << (bits - 1)) || v >= (1L << bits)) {
 	fprintf (stderr, "%3d: constant outside of allowed range\n", line_num);
 	num_errors++;
@@ -242,30 +248,8 @@ generate_hex_instruction (const char* val_str)
 {
     int value;
 
-    if (0 == hex_count) {
-	if (0 == read_val (val_str, &value, 16)) {
-	    write_value (value);
-	}
-	hex_count = 1;
-    } else {
-        fprintf (stderr, "%3d: line contains multiple hex values\n", line_num);
-	num_errors++;
-    }
-}
-
-static void
-end_current_bin_line () 
-{
-    if (bin_count == 0) { 
-        /* a blank line */
-	new_inst_line ();
-    } else {
-	if (bin_count < 16) {
-	    fprintf (stderr, "%3d: line contains only %d digits\n", line_num,
-		     bin_count);
-	    num_errors++;
-	}
-	generate_bin_instruction (binary_value);
-    }
+    if (!read_val (val_str, &value, 16))
+        write_value (value);
+    new_inst_line ();
 }
 

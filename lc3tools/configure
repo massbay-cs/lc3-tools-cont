@@ -2,7 +2,7 @@
 
 # Parse the arguments...
 
-INSTALL_DIR=/usr/bin
+INSTALL_DIR="/usr/bin"
 case $1 in
 	--installdir)
 	    INSTALL_DIR=$2 ;

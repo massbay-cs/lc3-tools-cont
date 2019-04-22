@@ -1,8 +1,8 @@
-FROM alpine:latest
+FROM i386/ubuntu
 
 RUN mkdir -p /usr/local/app
 WORKDIR /usr/local/app
-RUN apk update && apk add bash build-base ncurses-dev nano flex
+RUN apt-get update && apt-get --assume-yes install bash build-essential ncurses-dev nano flex libtinfo-dev
 
 COPY . .
 

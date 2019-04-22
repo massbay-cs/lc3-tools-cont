@@ -204,6 +204,8 @@ static int yystacksize;
 #define yyfree(x) free(x)
 extern int yylex();
 
+void *malloc(size_t size);    // sws, april 2011
+
 static YYPTR
 YYDEFUN (yymalloc, (bytes), unsigned bytes)
 {
